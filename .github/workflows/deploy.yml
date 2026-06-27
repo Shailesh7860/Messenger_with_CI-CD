@@ -1,0 +1,29 @@
+name: Deploy to Render
+
+# Trigger this script every time code is pushed to the main branch
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/node-versions@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies & Test Build
+        run: |
+          npm install
+
+      - name: Trigger Render Deployment
+        run: |
+          curl -X POST https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}"
