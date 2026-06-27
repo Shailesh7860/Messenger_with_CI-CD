@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fun Project Messenger</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 350px; }
+        input { width: 90%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; }
+        button { width: 96%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        #chat-screen { display: none; width: 400px; }
+        #messages { border: 1px solid #ddd; height: 300px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; background: #fafafa; border-radius: 4px; }
+        .msg { margin-bottom: 8px; padding: 6px 10px; border-radius: 4px; background: #e9ecef; width: fit-content; }
+    </style>
+</head>
+<body>
+
+    <div id="auth-screen" class="container">
+        <h2>🔑 Chat Login</h2>
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button onclick="login()">Log In</button>
+        <p style="text-align: center; font-size: 12px; color: #666;">Don't have an account? It will auto-register if new!</p>
+    </div>
+
+    <div id="chat-screen" class="container">
+        <h2 id="chat-header">💬 Global Chat</h2>
+        <div id="messages"></div>
+        <div style="display: flex;">
+            <input type="text" id="msg-input" placeholder="Type a message..." style="flex: 1; margin-right: 5px;">
+            <button onclick="sendMessage()" style="width: auto;">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let currentUsername = "";
+
+        async function login() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+
+            if(!user || !pass) return alert("Fill in details!");
+
+            // Attempt to hit our login endpoint
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            });
+
+            if(res.status === 200) {
+                currentUsername = user;
+                startChat();
+            } else {
+                // If login fails, let's try to auto-register them for ease of testing!
+                const regRes = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+                if(regRes.status === 201) {
+                    currentUsername = user;
+                    alert("Account created automatically!");
+                    startChat();
+                } else {
+                    alert("Authentication failed.");
+                }
+            }
+        }
+
+        function startChat() {
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('chat-screen').style.display = 'block';
+            document.getElementById('chat-header').innerText = `💬 Hello, ${currentUsername}`;
+
+            // Connect to our WebSocket server!
+            socket = io();
+
+            // Listen for incoming messages from the server
+            socket.on('receive_message', (data) => {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'msg';
+                msgDiv.innerHTML = `<strong>${data.user}:</strong> ${data.text}`;
+                
+                const box = document.getElementById('messages');
+                box.appendChild(msgDiv);
+                box.scrollTop = box.scrollHeight; // Auto scroll down
+            });
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('msg-input');
+            if(!input.value.trim()) return;
+
+            // Send the message payload over the WebSocket highway
+            socket.emit('chat_message', {
+                user: currentUsername,
+                text: input.value
+            });
+
+            input.value = "";
+        }
+    </script>
+</body>
+</html>
