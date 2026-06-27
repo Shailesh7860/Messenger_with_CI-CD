@@ -73,6 +73,12 @@ io.on('connection', (socket) => {
         io.emit('receive_message', data);
     });
 
+    // Listen for when someone is typing
+    socket.on('typing', (data) => {
+        // Broadcast to everyone EXCEPT the person typing
+        socket.broadcast.emit('user_typing', data);
+    });
+
     // Listen for when a user closes their browser/tab
     socket.on('disconnect', () => {
         console.log(`❌ User disconnected: ${socket.id}`);
