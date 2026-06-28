@@ -2,32 +2,40 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const http = require('http'); // Built-in Node.js module for creating servers
-const { Server } = require('socket.io'); // Import Socket.io
+const jwt = require('jsonwebtoken'); // 🚀 NEW: Security tokens
+const http = require('http'); 
+const { Server } = require('socket.io'); 
 const User = require('./models/User'); 
 
 const app = express();
 app.use(express.json());
-// Tell express to serve files inside the 'public' folder automatically
 app.use(express.static('public'));
-// 1. Create an HTTP server using Express
+
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
-// 2. Attach Socket.io to our HTTP server
-const io = new Server(server, {
-    cors: {
-        origin: "*", // Allows connections from our Codespace environment
-    }
-});
-
-// Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('🚀 Successfully connected to MongoDB!'))
     .catch((err) => console.error('❌ Database connection error:', err));
 
+const JWT_SECRET = process.env.JWT_SECRET || 'fallbacksecret';
+
+// 🚀 NEW: Security middleware to verify if an HTTP request has a real signed token
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) return res.status(401).json({ message: 'Access Denied: Missing Security Token' });
+
+    jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
+        if (err) return res.status(403).json({ message: 'Access Denied: Invalid or Expired Token' });
+        req.user = decodedUser; // Inject the verified payload into the request
+        next();
+    });
+}
+
 // --- HTTP ROUTES ---
 
-// Registration endpoint
 app.post('/api/register', async (req, res) => {
     try {
         let { username, password } = req.body;
@@ -41,13 +49,15 @@ app.post('/api/register', async (req, res) => {
         
         const newUser = new User({ username: normalizedUsername, password: hashedPassword });
         await newUser.save();
-        res.status(201).json({ message: 'User registered successfully!' });
+
+        // 🚀 NEW: Automatically generate secure token upon successful registration
+        const token = jwt.sign({ username: normalizedUsername }, JWT_SECRET, { expiresIn: '7d' });
+        res.status(201).json({ message: 'User registered!', token, username: normalizedUsername });
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
-// Login endpoint
 app.post('/api/login', async (req, res) => {
     try {
         let { username, password } = req.body;
@@ -59,13 +69,14 @@ app.post('/api/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ message: 'Invalid username or password' });
         
-        res.status(200).json({ message: `Welcome back, ${user.username}!`, userId: user._id });
+        // 🚀 NEW: Generate secure token upon verified credentials verification login
+        const token = jwt.sign({ username: normalizedUsername }, JWT_SECRET, { expiresIn: '7d' });
+        res.status(200).json({ message: 'Success', token, username: normalizedUsername });
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
-// Message Schema with a 3-day auto-expiry (TTL) and Room tracking partitioned fields
 const MessageSchema = new mongoose.Schema({
     room: { type: String, required: true, default: 'global' }, 
     user: { type: String, required: true },
@@ -74,8 +85,8 @@ const MessageSchema = new mongoose.Schema({
 });
 const Message = mongoose.model('Message', MessageSchema);
 
-// Fetch chat history for a specific room query targeting
-app.get('/api/messages', async (req, res) => {
+// 🚀 NEW: Protected API route using our authentication middleware guard
+app.get('/api/messages', authenticateToken, async (req, res) => {
     try {
         const room = req.query.room || 'global';
         const history = await Message.find({ room }).sort({ timestamp: -1 }).limit(50);
@@ -85,61 +96,74 @@ app.get('/api/messages', async (req, res) => {
     }
 });
 
-// Global state object to map unique raw socket IDs to user names
 const activeUsers = {};
+
+// 🚀 NEW: WebSocket Authorization Middleware. Rejects connections trying to crack open sockets without a valid JWT
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) return next(new Error("Authentication error: Token missing"));
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) return next(new Error("Authentication error: Invalid Token"));
+        socket.verifiedUser = decoded.username; // Inject verified name safely into the socket instance
+        next();
+    });
+});
 
 // --- WEBSOCKET LOGIC ---
 io.on('connection', (socket) => {
-    console.log(`⚡ A user connected: ${socket.id}`);
+    console.log(`⚡ Verified connection established: ${socket.id}`);
 
-    // Listen for user registrations upon entering the chat screen
-    socket.on('register_user', (username) => {
-        activeUsers[socket.id] = username.trim().toLowerCase();
+    // Register active chatter using the secure internal verification token name payload
+    socket.on('register_user', () => {
+        const verifiedName = socket.verifiedUser;
+        activeUsers[socket.id] = verifiedName;
         const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
-        console.log(`👥 Unique Active Users Roster:`, uniqueUsernames);
         io.emit('update_user_list', uniqueUsernames);
     });
 
-    // Room partitioning registration handlers
     socket.on('join_room', (room) => {
-        // Leave any previous rooms this socket was registered to safely
         const currentRooms = Array.from(socket.rooms);
         currentRooms.forEach(r => {
             if (r !== socket.id) socket.leave(r);
         });
-
         socket.join(room);
-        console.log(`🚪 Socket ${socket.id} joined partitioned room stream: ${room}`);
     });
 
-    // Listen for incoming chat messages inside partitioned environments
     socket.on('chat_message', async (data) => {
         const targetRoom = data.room || 'global';
         
+        // 🚀 CRITICAL SECURITY OVERWRITE: Ignore the frontend name string and stamp the message using the cryptographically verified user socket property
+        const secureSender = socket.verifiedUser;
+
         try {
             const newMessage = new Message({
                 room: targetRoom, 
-                user: data.user,
+                user: secureSender, // Safe from impersonation overrides
                 text: data.text
             });
             await newMessage.save();
         } catch (err) {
-            console.error("❌ Error saving message to DB:", err);
+            console.error("❌ DB Save Error:", err);
         }
         
-        // Broadcast strictly to current room subchannel listeners
-        io.to(targetRoom).emit('receive_message', data);
+        io.to(targetRoom).emit('receive_message', {
+            room: targetRoom,
+            user: secureSender,
+            text: data.text,
+            timestamp: new Date()
+        });
     });
 
-    // Listen for typing events within room bounds
     socket.on('typing', (data) => {
         const targetRoom = data.room || 'global';
-        socket.to(targetRoom).emit('user_typing', data);
+        socket.to(targetRoom).emit('user_typing', {
+            user: socket.verifiedUser,
+            isTyping: data.isTyping
+        });
     });
 
-    // Clean up connections upon disconnect
     socket.on('disconnect', () => {
-        console.log(`❌ User disconnected: ${socket.id}`);
         if (activeUsers[socket.id]) {
             delete activeUsers[socket.id];
             const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
@@ -148,8 +172,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// Port runtime startup parameters configurations 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running secure on port ${PORT}`);
 });

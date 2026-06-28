@@ -11,27 +11,25 @@
 
     <div id="auth-screen" class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700/50 transition-all">
         <div class="text-center mb-6">
-            <span class="text-4xl">⚡</span>
-            <h2 class="text-2xl font-bold mt-2 text-white">Welcome Back</h2>
-            <p class="text-slate-400 text-sm mt-1">Sign in or auto-register instantly</p>
+            <span class="text-4xl">🔐</span>
+            <h2 class="text-2xl font-bold mt-2 text-white">Secure Gateway</h2>
+            <p class="text-slate-400 text-sm mt-1">Sign in with Cryptographic Validation</p>
         </div>
         <div class="space-y-4">
             <input type="text" id="username" placeholder="Username" onkeydown="if(event.key === 'Enter') document.getElementById('password').focus()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500" autofocus>
     
             <input type="password" id="password" placeholder="Password" onkeydown="if(event.key === 'Enter') login()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500">
     
-            <button onclick="login()" class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-500 font-semibold rounded-xl text-white shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer">Log In / Register</button>
+            <button onclick="login()" class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-500 font-semibold rounded-xl text-white shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all cursor-pointer">Verify & Connect</button>
         </div>
     </div>
 
     <div id="chat-screen" class="hidden bg-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl h-[650px] border border-slate-700/50 overflow-hidden flex">
         
         <div class="w-1/3 bg-slate-950 border-r border-slate-700/50 flex flex-col">
-            <div class="p-4 border-b border-slate-700/50 flex flex-col space-y-2">
-                <div class="flex items-center justify-between">
-                    <span id="welcome-title" class="font-bold text-white text-sm truncate">Chat System</span>
-                    <button onclick="logout()" class="text-xs text-slate-400 hover:text-rose-400 bg-slate-800 hover:bg-rose-950/30 border border-slate-700/50 hover:border-rose-900/50 px-2 py-1 rounded-md transition-all cursor-pointer">Log Out</button>
-                </div>
+            <div class="p-4 border-b border-slate-700/50 flex items-center justify-between">
+                <span id="welcome-title" class="font-bold text-white text-sm truncate">Chat System</span>
+                <button onclick="logout()" class="text-xs text-slate-400 hover:text-rose-400 bg-slate-800 hover:bg-rose-950/30 border border-slate-700/50 hover:border-rose-900/50 px-2 py-1 rounded-md transition-all cursor-pointer">Log Out</button>
             </div>
             
             <div class="flex-1 overflow-y-auto p-2 space-y-1">
@@ -71,7 +69,6 @@
         let currentRoom = "global";
         let typingTimeout;
 
-        // 🚀 NEW HELPER: Generates a matching text and border color mix using a deterministic hash of the user's name
         function getUserAvatarStyles(username) {
             const colors = [
                 { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400' },
@@ -82,13 +79,11 @@
                 { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400' },
                 { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-400' }
             ];
-            
             let hash = 0;
             for (let i = 0; i < username.length; i++) {
                 hash = username.charCodeAt(i) + ((hash << 5) - hash);
             }
-            const index = Math.abs(hash) % colors.length;
-            return colors[index];
+            return colors[Math.abs(hash) % colors.length];
         }
 
         async function login() {
@@ -103,9 +98,13 @@
                 body: JSON.stringify({ username: user, password: pass })
             });
 
+            const data = await res.json();
+
             if(res.status === 200) {
-                currentUsername = user.toLowerCase();
-                localStorage.setItem('chat_username', currentUsername);
+                currentUsername = data.username;
+                // 🚀 NEW: Save secure cryptographic payload token
+                localStorage.setItem('chat_token', data.token);
+                localStorage.setItem('chat_username', data.username);
                 startChat();
             } else {
                 const regRes = await fetch('/api/register', {
@@ -113,18 +112,21 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username: user, password: pass })
                 });
+                const regData = await regRes.json();
                 if(regRes.status === 201) {
-                    currentUsername = user.toLowerCase();
-                    localStorage.setItem('chat_username', currentUsername);
+                    currentUsername = regData.username;
+                    localStorage.setItem('chat_token', regData.token);
+                    localStorage.setItem('chat_username', regData.username);
                     alert("Account created automatically!");
                     startChat();
                 } else {
-                    alert("Authentication failed.");
+                    alert(data.message || "Authentication failed.");
                 }
             }
         }
 
         function logout() {
+            localStorage.removeItem('chat_token');
             localStorage.removeItem('chat_username');
             if(socket) socket.disconnect();
             
@@ -143,8 +145,14 @@
             document.getElementById('chat-screen').style.display = 'flex';
             document.getElementById('welcome-title').innerText = `👤 ${currentUsername}`;
 
-            socket = io();
-            socket.emit('register_user', currentUsername);
+            const token = localStorage.getItem('chat_token');
+
+            // 🚀 NEW: Pack secure Token verification variables straight into socket bootstrap parameters initialization configurations
+            socket = io({
+                auth: { token }
+            });
+
+            socket.emit('register_user');
 
             switchRoom('global');
 
@@ -163,7 +171,6 @@
                     userBtn.id = `room-btn-${privateRoomId}`;
 
                     const avatarInit = user.charAt(0).toUpperCase();
-                    // 🚀 USE STYLES ENGINE: Highlight roster listing circles with unique colors
                     const style = getUserAvatarStyles(user);
 
                     userBtn.innerHTML = `
@@ -218,10 +225,18 @@
                 socket.emit('join_room', currentRoom);
             }
 
+            // 🚀 NEW: Append Authentication Authorization Bearer verification Headers parameters arrays fields targets to history request
             try {
-                const response = await fetch(`/api/messages?room=${currentRoom}`);
-                const history = await response.json();
-                history.forEach(data => renderSingleMessage(data));
+                const token = localStorage.getItem('chat_token');
+                const response = await fetch(`/api/messages?room=${currentRoom}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if(response.status === 200) {
+                    const history = await response.json();
+                    history.forEach(data => renderSingleMessage(data));
+                } else {
+                    console.error("🔒 Token validation history hydration blocking error failed");
+                }
             } catch (err) {
                 console.error("❌ Error loading chat history:", err);
             }
@@ -236,12 +251,10 @@
             const initial = data.user.charAt(0).toUpperCase();
 
             const isImage = data.text.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || data.text.startsWith('https://images.unsplash.com');
-            
             const messageContent = isImage 
                 ? `<img src="${data.text}" class="rounded-xl max-w-full h-auto max-h-48 object-cover mt-1 border border-slate-700/50 shadow-md cursor-pointer hover:opacity-90 transition-all" onclick="window.open('${data.text}', '_blank')">`
                 : `${data.text}`;
 
-            // 🚀 USE STYLES ENGINE: Extract unique avatar theme dynamically
             const style = getUserAvatarStyles(data.user);
 
             if (data.user === currentUsername) {
@@ -285,26 +298,26 @@
 
             socket.emit('chat_message', {
                 room: currentRoom,
-                user: currentUsername,
                 text: input.value.trim()
             });
 
             input.value = "";
-            socket.emit('typing', { room: currentRoom, user: currentUsername, isTyping: false });
+            socket.emit('typing', { room: currentRoom, isTyping: false });
         }
 
         function notifyTyping() {
             if(!socket) return;
-            socket.emit('typing', { room: currentRoom, user: currentUsername, isTyping: true });
+            socket.emit('typing', { room: currentRoom, isTyping: true });
             
             clearTimeout(typingTimeout);
             typingTimeout = setTimeout(() => {
-                socket.emit('typing', { room: currentRoom, user: currentUsername, isTyping: false });
+                socket.emit('typing', { room: currentRoom, isTyping: false });
             }, 1500);
         }
 
         const savedUser = localStorage.getItem('chat_username');
-        if (savedUser) {
+        const savedToken = localStorage.getItem('chat_token');
+        if (savedUser && savedToken) {
             currentUsername = savedUser.toLowerCase();
             startChat();
         } else {
