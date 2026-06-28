@@ -59,7 +59,7 @@
             <div id="typing-indicator" class="px-4 text-xs text-indigo-400 italic h-5 flex items-center bg-slate-800/30 font-medium"></div>
 
             <div class="p-3 bg-slate-950 border-t border-slate-700/50 flex items-center space-x-2">
-                <input type="text" id="msg-input" placeholder="Type a message..." oninput="notifyTyping()" onkeydown="checkEnter(event)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-indigo-500 transition-all text-sm">
+                <input type="text" id="msg-input" placeholder="Type a message or paste image URL..." oninput="notifyTyping()" onkeydown="checkEnter(event)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-indigo-500 transition-all text-sm">
                 <button onclick="sendMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-lg shadow-indigo-600/20 cursor-pointer active:scale-95">Send</button>
             </div>
         </div>
@@ -126,21 +126,18 @@
             socket = io();
             socket.emit('register_user', currentUsername);
 
-            // Establish primary core system room default tracking links
             switchRoom('global');
 
-            // Handle incoming live active roster updates and build roster elements
             socket.on('update_user_list', (onlineUsers) => {
                 const container = document.getElementById('active-user-nodes');
                 container.innerHTML = "";
                 
                 onlineUsers.forEach(user => {
-                    if (user === currentUsername) return; // Skip showing yourself in the list
+                    if (user === currentUsername) return; 
                     
                     const userBtn = document.createElement('button');
                     userBtn.className = "w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium text-sm transition-all text-left cursor-pointer";
                     
-                    // Create a deterministic private room identifier string sorted alphabetized
                     const privateRoomId = [currentUsername, user].sort().join('_');
                     userBtn.onclick = () => switchRoom(privateRoomId, user);
                     userBtn.id = `room-btn-${privateRoomId}`;
@@ -156,7 +153,6 @@
             });
 
             socket.on('receive_message', (data) => {
-                // Ensure the incoming socket message belongs to the current open window room perspective view
                 if(data.room === currentRoom) {
                     renderSingleMessage(data);
                 }
@@ -173,7 +169,6 @@
         }
 
         async function switchRoom(roomId, targetDisplayName = null) {
-            // Unhighlight previous navigation selection layouts
             const prevActive = document.querySelector('[id^="room-btn-"].bg-indigo-600');
             if(prevActive) {
                 prevActive.className = prevActive.className.replace("bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10", "text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium");
@@ -181,13 +176,11 @@
 
             currentRoom = roomId;
             
-            // Highlight current selection item nodes layout styles matrix
             const newActive = document.getElementById(`room-btn-${roomId}`);
             if(newActive) {
                 newActive.className = newActive.className.replace("text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium", "bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10");
             }
 
-            // Repaint text view context display strings markers headers panel fields
             const mainHeader = document.getElementById('chat-header');
             if(roomId === 'global') {
                 mainHeader.innerText = "💬 Global Lounge";
@@ -195,7 +188,6 @@
                 mainHeader.innerText = `🔒 DM: ${targetDisplayName || 'Private Chat'}`;
             }
 
-            // Wipe out view stream frame and notify server connection layers
             document.getElementById('messages').innerHTML = "";
             document.getElementById('typing-indicator').innerText = "";
             
@@ -203,7 +195,6 @@
                 socket.emit('join_room', currentRoom);
             }
 
-            // Hydrate historical values matching targeted structural identifier rules parameters
             try {
                 const response = await fetch(`/api/messages?room=${currentRoom}`);
                 const history = await response.json();
@@ -221,6 +212,14 @@
             const formattedTime = msgTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const initial = data.user.charAt(0).toUpperCase();
 
+            // 🚀 RICH MEDIA MODULE: Check if the text is an image URL format extension
+            const isImage = data.text.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || data.text.startsWith('https://images.unsplash.com');
+            
+            // Layout Generator Engine
+            const messageContent = isImage 
+                ? `<img src="${data.text}" class="rounded-xl max-w-full h-auto max-h-48 object-cover mt-1 border border-slate-700/50 shadow-md cursor-pointer hover:opacity-90 transition-all" onclick="window.open('${data.text}', '_blank')">`
+                : `${data.text}`;
+
             if (data.user === currentUsername) {
                 msgDiv.className = "flex flex-col items-end space-y-0.5";
                 msgDiv.innerHTML = `
@@ -228,7 +227,7 @@
                         <span class="text-[10px] text-slate-400">You</span>
                         <span class="text-[9px] text-slate-500 font-mono">${formattedTime}</span>
                     </div>
-                    <div class="bg-indigo-600 text-white px-3.5 py-2 rounded-2xl rounded-tr-none text-sm max-w-[85%] break-words shadow-md shadow-indigo-600/10">${data.text}</div>
+                    <div class="${isImage ? '' : 'bg-indigo-600 text-white px-3.5 py-2 rounded-2xl rounded-tr-none'} text-sm max-w-[85%] break-words shadow-md shadow-indigo-600/10">${messageContent}</div>
                 `;
             } else {
                 msgDiv.className = "flex items-start space-x-2";
@@ -239,7 +238,7 @@
                             <span class="text-[10px] text-slate-400 font-medium">${data.user}</span>
                             <span class="text-[9px] text-slate-500 font-mono">${formattedTime}</span>
                         </div>
-                        <div class="bg-slate-700 text-slate-100 px-3.5 py-2 rounded-2xl rounded-tl-none text-sm max-w-[85%] break-words shadow-md self-start">${data.text}</div>
+                        <div class="${isImage ? '' : 'bg-slate-700 text-slate-100 px-3.5 py-2 rounded-2xl rounded-tl-none'} text-sm max-w-[85%] break-words shadow-md self-start">${messageContent}</div>
                     </div>
                 `;
             }
@@ -280,7 +279,6 @@
             }, 1500);
         }
 
-        // Auto-Login Session Setup Matrix Verification Boot Hook
         const savedUser = localStorage.getItem('chat_username');
         if (savedUser) {
             currentUsername = savedUser.toLowerCase();
