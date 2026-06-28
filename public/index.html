@@ -30,7 +30,7 @@
                 <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
                 <h2 id="chat-header" class="font-semibold text-white">💬 Global Chat</h2>
             </div>
-            <span class="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-md">Live WebSockets</span>
+            <span id="user-count" class="text-xs text-indigo-400 bg-slate-900 border border-slate-700/60 px-2.5 py-1 rounded-md font-medium transition-all" title="Connecting...">👥 1 Online</span>
         </div>
 
         <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"></div>
@@ -84,16 +84,26 @@
             document.getElementById('chat-screen').style.display = 'flex';
             document.getElementById('chat-header').innerText = `💬 Chatting as: ${currentUsername}`;
 
-            // 🚀 THE FIX: Focus the chat input box immediately after making the screen visible
+            // Focus the chat message field instantly once DOM element is displayed
             document.getElementById('msg-input').focus();
 
             socket = io();
 
-            // 1. Listen for incoming messages
+            // Notify backend mapping layer about user connection identity
+            socket.emit('register_user', currentUsername);
+
+            // Handle incoming live active roster updates
+            socket.on('update_user_list', (onlineUsers) => {
+                const countBadge = document.getElementById('user-count');
+                countBadge.innerText = `👥 ${onlineUsers.length} Online`;
+                countBadge.title = `Active: ${onlineUsers.join(', ')}`;
+            });
+
+            // Listen for incoming messages
             socket.on('receive_message', (data) => {
                 const msgDiv = document.createElement('div');
                 
-                // Smart Alignment: Style your messages differently than other people's!
+                // Smart Alignment styling engine
                 if (data.user === currentUsername) {
                     msgDiv.className = "flex flex-col items-end space-y-0.5";
                     msgDiv.innerHTML = `
@@ -113,7 +123,7 @@
                 box.scrollTop = box.scrollHeight; 
             });
 
-            // 2. Typing listener
+            // Broadcasted typing indicator updates
             socket.on('user_typing', (data) => {
                 const indicator = document.getElementById('typing-indicator');
                 if (data.isTyping) {
@@ -141,7 +151,6 @@
             });
 
             input.value = "";
-            
             socket.emit('typing', { user: currentUsername, isTyping: false });
         }
 
@@ -155,7 +164,7 @@
             }, 1500);
         }
 
-        // Auto-focus username input on page load safely
+        // Standard script bootstrap focus hook
         document.getElementById('username').focus();
     </script>
 </body>
