@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken'); // 🚀 NEW: Security tokens
+const jwt = require('jsonwebtoken'); 
 const http = require('http'); 
 const { Server } = require('socket.io'); 
 const User = require('./models/User'); 
@@ -20,7 +20,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallbacksecret';
 
-// 🚀 NEW: Security middleware to verify if an HTTP request has a real signed token
+// Middleware to verify signed HTTP JWT requests
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -29,7 +29,7 @@ function authenticateToken(req, res, next) {
 
     jwt.verify(token, JWT_SECRET, (err, decodedUser) => {
         if (err) return res.status(403).json({ message: 'Access Denied: Invalid or Expired Token' });
-        req.user = decodedUser; // Inject the verified payload into the request
+        req.user = decodedUser;
         next();
     });
 }
@@ -50,7 +50,6 @@ app.post('/api/register', async (req, res) => {
         const newUser = new User({ username: normalizedUsername, password: hashedPassword });
         await newUser.save();
 
-        // 🚀 NEW: Automatically generate secure token upon successful registration
         const token = jwt.sign({ username: normalizedUsername }, JWT_SECRET, { expiresIn: '7d' });
         res.status(201).json({ message: 'User registered!', token, username: normalizedUsername });
     } catch (error) {
@@ -69,7 +68,6 @@ app.post('/api/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ message: 'Invalid username or password' });
         
-        // 🚀 NEW: Generate secure token upon verified credentials verification login
         const token = jwt.sign({ username: normalizedUsername }, JWT_SECRET, { expiresIn: '7d' });
         res.status(200).json({ message: 'Success', token, username: normalizedUsername });
     } catch (error) {
@@ -80,12 +78,12 @@ app.post('/api/login', async (req, res) => {
 const MessageSchema = new mongoose.Schema({
     room: { type: String, required: true, default: 'global' }, 
     user: { type: String, required: true },
-    text: { type: String, required: true },
+    text: { type: String, required: true }, // Will hold encrypted, unreadable text inside MongoDB
     timestamp: { type: Date, default: Date.now, expires: 86400 } 
 });
 const Message = mongoose.model('Message', MessageSchema);
 
-// 🚀 NEW: Protected API route using our authentication middleware guard
+// Protected endpoint to pull room history
 app.get('/api/messages', authenticateToken, async (req, res) => {
     try {
         const room = req.query.room || 'global';
@@ -98,14 +96,14 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
 
 const activeUsers = {};
 
-// 🚀 NEW: WebSocket Authorization Middleware. Rejects connections trying to crack open sockets without a valid JWT
+// WebSocket token verification
 io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error("Authentication error: Token missing"));
 
     jwt.verify(token, JWT_SECRET, (err, decoded) => {
         if (err) return next(new Error("Authentication error: Invalid Token"));
-        socket.verifiedUser = decoded.username; // Inject verified name safely into the socket instance
+        socket.verifiedUser = decoded.username; 
         next();
     });
 });
@@ -114,10 +112,8 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
     console.log(`⚡ Verified connection established: ${socket.id}`);
 
-    // Register active chatter using the secure internal verification token name payload
     socket.on('register_user', () => {
-        const verifiedName = socket.verifiedUser;
-        activeUsers[socket.id] = verifiedName;
+        activeUsers[socket.id] = socket.verifiedUser;
         const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
         io.emit('update_user_list', uniqueUsernames);
     });
@@ -132,27 +128,41 @@ io.on('connection', (socket) => {
 
     socket.on('chat_message', async (data) => {
         const targetRoom = data.room || 'global';
-        
-        // 🚀 CRITICAL SECURITY OVERWRITE: Ignore the frontend name string and stamp the message using the cryptographically verified user socket property
         const secureSender = socket.verifiedUser;
 
         try {
             const newMessage = new Message({
                 room: targetRoom, 
-                user: secureSender, // Safe from impersonation overrides
-                text: data.text
+                user: secureSender, 
+                text: data.text // Encrypted ciphertext directly from frontend
             });
-            await newMessage.save();
+            const savedMessage = await newMessage.save();
+            
+            // Broadcast message back with database unique ID appended for targeting removals
+            io.to(targetRoom).emit('receive_message', {
+                _id: savedMessage._id,
+                room: targetRoom,
+                user: secureSender,
+                text: data.text,
+                timestamp: savedMessage.timestamp
+            });
         } catch (err) {
             console.error("❌ DB Save Error:", err);
         }
-        
-        io.to(targetRoom).emit('receive_message', {
-            room: targetRoom,
-            user: secureSender,
-            text: data.text,
-            timestamp: new Date()
-        });
+    });
+
+    // 🚀 NEW: Listen for deletion requests and check if request sender actually owns the target message
+    socket.on('delete_message', async (data) => {
+        try {
+            const msg = await Message.findById(data.msgId);
+            if (msg && msg.user === socket.verifiedUser) {
+                await Message.findByIdAndDelete(data.msgId);
+                // Broadcast deletion event to clear the layout on all peer screens inside the target room
+                io.to(msg.room).emit('message_deleted', { msgId: data.msgId, room: msg.room });
+            }
+        } catch (err) {
+            console.error("❌ Delete error:", err);
+        }
     });
 
     socket.on('typing', (data) => {

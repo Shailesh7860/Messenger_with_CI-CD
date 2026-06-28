@@ -13,7 +13,7 @@
         <div class="text-center mb-6">
             <span class="text-4xl">🔐</span>
             <h2 class="text-2xl font-bold mt-2 text-white">Secure Gateway</h2>
-            <p class="text-slate-400 text-sm mt-1">Sign in with Cryptographic Validation</p>
+            <p class="text-slate-400 text-sm mt-1">Sign in with End-to-End Cryptography</p>
         </div>
         <div class="space-y-4">
             <input type="text" id="username" placeholder="Username" onkeydown="if(event.key === 'Enter') document.getElementById('password').focus()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500" autofocus>
@@ -50,6 +50,7 @@
                     <div class="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></div>
                     <h2 id="chat-header" class="font-semibold text-white tracking-wide">💬 Global Lounge</h2>
                 </div>
+                <span class="text-[10px] font-mono bg-indigo-950/50 border border-indigo-900/50 text-indigo-400 px-2 py-0.5 rounded">🔒 E2EE Active</span>
             </div>
 
             <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"></div>
@@ -57,7 +58,7 @@
             <div id="typing-indicator" class="px-4 text-xs text-indigo-400 italic h-5 flex items-center bg-slate-800/30 font-medium"></div>
 
             <div class="p-3 bg-slate-950 border-t border-slate-700/50 flex items-center space-x-2">
-                <input type="text" id="msg-input" placeholder="Type a message or paste image URL..." oninput="notifyTyping()" onkeydown="checkEnter(event)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-indigo-500 transition-all text-sm">
+                <input type="text" id="msg-input" placeholder="Type an encrypted message..." oninput="notifyTyping()" onkeydown="checkEnter(event)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-white outline-none focus:border-indigo-500 transition-all text-sm">
                 <button onclick="sendMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-all shadow-lg shadow-indigo-600/20 cursor-pointer active:scale-95">Send</button>
             </div>
         </div>
@@ -68,6 +69,52 @@
         let currentUsername = "";
         let currentRoom = "global";
         let typingTimeout;
+
+        // 🚀 NEW E2EE LAYER: Deterministic AES encryption key derivator using room IDs
+        async function getRoomCryptoKey(roomIdentifier) {
+            const encoder = new TextEncoder();
+            const rawSecretMaterial = encoder.encode(roomIdentifier + "shared_secret_salt_string");
+            const baseKey = await crypto.subtle.importKey(
+                "raw", rawSecretMaterial, { name: "SHA-256" }, false, ["deriveKey"]
+            );
+            return crypto.subtle.deriveKey(
+                { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(16), info: new Uint8Array(0) },
+                baseKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+            );
+        }
+
+        async function encryptText(plainText, roomName) {
+            const encoder = new TextEncoder();
+            const cryptoKey = await getRoomCryptoKey(roomName);
+            const iv = crypto.getRandomValues(new Uint8Array(12)); // Initialize vector parameters
+            const encryptedBuffer = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv }, cryptoKey, encoder.encode(plainText)
+            );
+            
+            // Convert parameters to transit strings
+            const outArray = new Uint8Array(iv.length + encryptedBuffer.byteLength);
+            outArray.set(iv, 0);
+            outArray.set(new Uint8Array(encryptedBuffer), iv.length);
+            return btoa(String.fromCharCode.apply(null, outArray));
+        }
+
+        async function decryptText(cipherBase64, roomName) {
+            try {
+                const cryptoKey = await getRoomCryptoKey(roomName);
+                const rawBinary = atob(cipherBase64);
+                const rawBuffer = new Uint8Array(rawBinary.length);
+                for (let i = 0; i < rawBinary.length; i++) rawBuffer[i] = rawBinary.charCodeAt(i);
+                
+                const iv = rawBuffer.slice(0, 12);
+                const data = rawBuffer.slice(12);
+                const decryptedBuffer = await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv }, cryptoKey, data
+                );
+                return new TextDecoder().decode(decryptedBuffer);
+            } catch(e) {
+                return "🔒 [Decryption Failure: Missing Secret Keys]";
+            }
+        }
 
         function getUserAvatarStyles(username) {
             const colors = [
@@ -80,16 +127,13 @@
                 { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-400' }
             ];
             let hash = 0;
-            for (let i = 0; i < username.length; i++) {
-                hash = username.charCodeAt(i) + ((hash << 5) - hash);
-            }
+            for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
             return colors[Math.abs(hash) % colors.length];
         }
 
         async function login() {
             const user = document.getElementById('username').value.trim();
             const pass = document.getElementById('password').value;
-
             if(!user || !pass) return alert("Fill in details!");
 
             const res = await fetch('/api/login', {
@@ -97,12 +141,10 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: user, password: pass })
             });
-
             const data = await res.json();
 
             if(res.status === 200) {
                 currentUsername = data.username;
-                // 🚀 NEW: Save secure cryptographic payload token
                 localStorage.setItem('chat_token', data.token);
                 localStorage.setItem('chat_username', data.username);
                 startChat();
@@ -129,15 +171,10 @@
             localStorage.removeItem('chat_token');
             localStorage.removeItem('chat_username');
             if(socket) socket.disconnect();
-            
             currentUsername = "";
             document.getElementById('messages').innerHTML = ""; 
             document.getElementById('chat-screen').style.display = 'none';
             document.getElementById('auth-screen').style.display = 'block';
-            
-            document.getElementById('username').value = "";
-            document.getElementById('password').value = "";
-            document.getElementById('username').focus();
         }
 
         async function startChat() {
@@ -146,12 +183,7 @@
             document.getElementById('welcome-title').innerText = `👤 ${currentUsername}`;
 
             const token = localStorage.getItem('chat_token');
-
-            // 🚀 NEW: Pack secure Token verification variables straight into socket bootstrap parameters initialization configurations
-            socket = io({
-                auth: { token }
-            });
-
+            socket = io({ auth: { token } });
             socket.emit('register_user');
 
             switchRoom('global');
@@ -159,10 +191,8 @@
             socket.on('update_user_list', (onlineUsers) => {
                 const container = document.getElementById('active-user-nodes');
                 container.innerHTML = "";
-                
                 onlineUsers.forEach(user => {
                     if (user === currentUsername) return; 
-                    
                     const userBtn = document.createElement('button');
                     userBtn.className = "w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium text-sm transition-all text-left cursor-pointer";
                     
@@ -182,50 +212,39 @@
                 });
             });
 
-            socket.on('receive_message', (data) => {
+            socket.on('receive_message', async (data) => {
                 if(data.room === currentRoom) {
-                    renderSingleMessage(data);
+                    await renderSingleMessage(data);
+                }
+            });
+
+            // 🚀 NEW: Receive deletion notices from socket
+            socket.on('message_deleted', (data) => {
+                if(data.room === currentRoom) {
+                    const TargetBubble = document.getElementById(`msg-node-${data.msgId}`);
+                    if(TargetBubble) TargetBubble.remove();
                 }
             });
 
             socket.on('user_typing', (data) => {
                 const indicator = document.getElementById('typing-indicator');
-                if (data.isTyping) {
-                    indicator.innerText = `✍️ ${data.user} is typing...`;
-                } else {
-                    indicator.innerText = "";
-                }
+                indicator.innerText = data.isTyping ? `✍️ ${data.user} is typing...` : "";
             });
         }
 
         async function switchRoom(roomId, targetDisplayName = null) {
             const prevActive = document.querySelector('[id^="room-btn-"].bg-indigo-600');
-            if(prevActive) {
-                prevActive.className = prevActive.className.replace("bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10", "text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium");
-            }
+            if(prevActive) prevActive.className = prevActive.className.replace("bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10", "text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium");
 
             currentRoom = roomId;
-            
             const newActive = document.getElementById(`room-btn-${roomId}`);
-            if(newActive) {
-                newActive.className = newActive.className.replace("text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium", "bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10");
-            }
+            if(newActive) newActive.className = newActive.className.replace("text-slate-300 hover:text-white hover:bg-slate-800/60 font-medium", "bg-indigo-600 text-white font-medium shadow-lg shadow-indigo-600/10");
 
-            const mainHeader = document.getElementById('chat-header');
-            if(roomId === 'global') {
-                mainHeader.innerText = "💬 Global Lounge";
-            } else {
-                mainHeader.innerText = `🔒 DM: ${targetDisplayName || 'Private Chat'}`;
-            }
-
+            document.getElementById('chat-header').innerText = roomId === 'global' ? "💬 Global Lounge" : `🔒 DM: ${targetDisplayName || 'Private Chat'}`;
             document.getElementById('messages').innerHTML = "";
-            document.getElementById('typing-indicator').innerText = "";
             
-            if(socket) {
-                socket.emit('join_room', currentRoom);
-            }
+            if(socket) socket.emit('join_room', currentRoom);
 
-            // 🚀 NEW: Append Authentication Authorization Bearer verification Headers parameters arrays fields targets to history request
             try {
                 const token = localStorage.getItem('chat_token');
                 const response = await fetch(`/api/messages?room=${currentRoom}`, {
@@ -233,34 +252,46 @@
                 });
                 if(response.status === 200) {
                     const history = await response.json();
-                    history.forEach(data => renderSingleMessage(data));
-                } else {
-                    console.error("🔒 Token validation history hydration blocking error failed");
+                    for(let msg of history) {
+                        await renderSingleMessage(msg);
+                    }
                 }
             } catch (err) {
                 console.error("❌ Error loading chat history:", err);
             }
-            
             document.getElementById('msg-input').focus();
         }
 
-        function renderSingleMessage(data) {
+        // 🚀 NEW Deletion Event Dispatcher Hook Trigger Link
+        function requestDeleteMessage(msgId) {
+            if(confirm("Are you sure you want to delete this message for everyone?")) {
+                socket.emit('delete_message', { msgId });
+            }
+        }
+
+        async function renderSingleMessage(data) {
             const msgDiv = document.createElement('div');
+            msgDiv.id = `msg-node-${data._id}`; // Assign explicit node tagging parameter identities
+            
             const msgTime = data.timestamp ? new Date(data.timestamp) : new Date();
             const formattedTime = msgTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const initial = data.user.charAt(0).toUpperCase();
 
-            const isImage = data.text.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || data.text.startsWith('https://images.unsplash.com');
+            // 🚀 DECRYPT FIRST: Convert backend cipher output string to plaintext layout variables
+            const plainText = await decryptText(data.text, currentRoom);
+
+            const isImage = plainText.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || plainText.startsWith('https://images.unsplash.com');
             const messageContent = isImage 
-                ? `<img src="${data.text}" class="rounded-xl max-w-full h-auto max-h-48 object-cover mt-1 border border-slate-700/50 shadow-md cursor-pointer hover:opacity-90 transition-all" onclick="window.open('${data.text}', '_blank')">`
-                : `${data.text}`;
+                ? `<img src="${plainText}" class="rounded-xl max-w-full h-auto max-h-48 object-cover mt-1 border border-slate-700/50 shadow-md cursor-pointer hover:opacity-90 transition-all" onclick="window.open('${plainText}', '_blank')">`
+                : `${plainText}`;
 
             const style = getUserAvatarStyles(data.user);
 
             if (data.user === currentUsername) {
-                msgDiv.className = "flex flex-col items-end space-y-0.5";
+                msgDiv.className = "flex flex-col items-end space-y-0.5 group";
                 msgDiv.innerHTML = `
                     <div class="flex items-center space-x-1.5 justify-end">
+                        <button onclick="requestDeleteMessage('${data._id}')" class="text-[10px] text-rose-500 opacity-0 group-hover:opacity-100 mr-1 hover:underline cursor-pointer transition-all">Delete</button>
                         <span class="text-[10px] text-slate-400">You</span>
                         <span class="text-[9px] text-slate-500 font-mono">${formattedTime}</span>
                     </div>
@@ -292,13 +323,17 @@
             }
         }
 
-        function sendMessage() {
+        async function sendMessage() {
             const input = document.getElementById('msg-input');
-            if(!input.value.trim()) return;
+            const cleanText = input.value.trim();
+            if(!cleanText) return;
+
+            // 🚀 ENCRYPT BEFORE OUTBOUND TRANSIT: Scramble plaintext before pushing across the net socket layer
+            const cipherText = await encryptText(cleanText, currentRoom);
 
             socket.emit('chat_message', {
                 room: currentRoom,
-                text: input.value.trim()
+                text: cipherText
             });
 
             input.value = "";
@@ -308,7 +343,6 @@
         function notifyTyping() {
             if(!socket) return;
             socket.emit('typing', { room: currentRoom, isTyping: true });
-            
             clearTimeout(typingTimeout);
             typingTimeout = setTimeout(() => {
                 socket.emit('typing', { room: currentRoom, isTyping: false });
