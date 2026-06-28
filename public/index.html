@@ -71,6 +71,26 @@
         let currentRoom = "global";
         let typingTimeout;
 
+        // 🚀 NEW HELPER: Generates a matching text and border color mix using a deterministic hash of the user's name
+        function getUserAvatarStyles(username) {
+            const colors = [
+                { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400' },
+                { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400' },
+                { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400' },
+                { bg: 'bg-sky-500/10', border: 'border-sky-500/30', text: 'text-sky-400' },
+                { bg: 'bg-fuchsia-500/10', border: 'border-fuchsia-500/30', text: 'text-fuchsia-400' },
+                { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400' },
+                { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-400' }
+            ];
+            
+            let hash = 0;
+            for (let i = 0; i < username.length; i++) {
+                hash = username.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const index = Math.abs(hash) % colors.length;
+            return colors[index];
+        }
+
         async function login() {
             const user = document.getElementById('username').value.trim();
             const pass = document.getElementById('password').value;
@@ -143,8 +163,11 @@
                     userBtn.id = `room-btn-${privateRoomId}`;
 
                     const avatarInit = user.charAt(0).toUpperCase();
+                    // 🚀 USE STYLES ENGINE: Highlight roster listing circles with unique colors
+                    const style = getUserAvatarStyles(user);
+
                     userBtn.innerHTML = `
-                        <div class="w-6 h-6 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[11px] font-bold text-slate-400 font-mono">${avatarInit}</div>
+                        <div class="w-6 h-6 rounded-full ${style.bg} border ${style.border} flex items-center justify-center text-[11px] font-bold ${style.text} font-mono">${avatarInit}</div>
                         <span class="truncate flex-1">${user}</span>
                         <div class="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></div>
                     `;
@@ -212,13 +235,14 @@
             const formattedTime = msgTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const initial = data.user.charAt(0).toUpperCase();
 
-            // 🚀 RICH MEDIA MODULE: Check if the text is an image URL format extension
             const isImage = data.text.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || data.text.startsWith('https://images.unsplash.com');
             
-            // Layout Generator Engine
             const messageContent = isImage 
                 ? `<img src="${data.text}" class="rounded-xl max-w-full h-auto max-h-48 object-cover mt-1 border border-slate-700/50 shadow-md cursor-pointer hover:opacity-90 transition-all" onclick="window.open('${data.text}', '_blank')">`
                 : `${data.text}`;
+
+            // 🚀 USE STYLES ENGINE: Extract unique avatar theme dynamically
+            const style = getUserAvatarStyles(data.user);
 
             if (data.user === currentUsername) {
                 msgDiv.className = "flex flex-col items-end space-y-0.5";
@@ -232,7 +256,7 @@
             } else {
                 msgDiv.className = "flex items-start space-x-2";
                 msgDiv.innerHTML = `
-                    <div class="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-xs font-bold text-indigo-300 mt-1 shrink-0 select-none">${initial}</div>
+                    <div class="w-7 h-7 rounded-full ${style.bg} border ${style.border} flex items-center justify-center text-xs font-bold ${style.text} mt-1 shrink-0 select-none">${initial}</div>
                     <div class="flex-1 flex flex-col space-y-0.5">
                         <div class="flex items-center space-x-1.5">
                             <span class="text-[10px] text-slate-400 font-medium">${data.user}</span>
