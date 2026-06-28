@@ -30,12 +30,19 @@ mongoose.connect(process.env.MONGO_URI)
 // Registration endpoint
 app.post('/api/register', async (req, res) => {
     try {
-        const { username, password } = req.body;
-        const userExists = await User.findOne({ username });
+        let { username, password } = req.body;
+        
+        // 🚀 THE FIX: Force username to lowercase to handle case-insensitivity
+        const normalizedUsername = username.trim().toLowerCase();
+
+        const userExists = await User.findOne({ username: normalizedUsername });
         if (userExists) return res.status(400).json({ message: 'Username is already taken' });
+        
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
-        const newUser = new User({ username, password: hashedPassword });
+        
+        // Save the lowercase version to the database
+        const newUser = new User({ username: normalizedUsername, password: hashedPassword });
         await newUser.save();
         res.status(201).json({ message: 'User registered successfully!' });
     } catch (error) {
@@ -46,11 +53,17 @@ app.post('/api/register', async (req, res) => {
 // Login endpoint
 app.post('/api/login', async (req, res) => {
     try {
-        const { username, password } = req.body;
-        const user = await User.findOne({ username });
+        let { username, password } = req.body;
+        
+        // 🚀 THE FIX: Force username to lowercase during lookup
+        const normalizedUsername = username.trim().toLowerCase();
+
+        const user = await User.findOne({ username: normalizedUsername });
         if (!user) return res.status(400).json({ message: 'Invalid username or password' });
+        
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ message: 'Invalid username or password' });
+        
         res.status(200).json({ message: `Welcome back, ${user.username}!`, userId: user._id });
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
@@ -66,9 +79,9 @@ io.on('connection', (socket) => {
 
     // Listen for user registrations upon entering the chat screen
     socket.on('register_user', (username) => {
-        activeUsers[socket.id] = username;
+        // 🚀 THE FIX: Ensure the socket system also formats it lowercase
+        activeUsers[socket.id] = username.trim().toLowerCase();
         
-        // 🚀 THE FIX: Convert raw values into a unique Set to filter out duplicate usernames
         const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
         console.log(`👥 Unique Active Users Roster:`, uniqueUsernames);
         
@@ -93,18 +106,16 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`❌ User disconnected: ${socket.id}`);
         
-        // Clean up the disconnected session from the mapping matrix
         if (activeUsers[socket.id]) {
             delete activeUsers[socket.id];
             
-            // 🚀 THE FIX: Re-calculate unique users upon clean up disconnection
             const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
             io.emit('update_user_list', uniqueUsernames);
         }
     });
 });
 
-// Port configuration adjusted to pick up dynamic container routing strings automatically
+// Port configuration
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
