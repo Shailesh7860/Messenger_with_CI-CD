@@ -142,17 +142,35 @@
         function renderSingleMessage(data) {
             const msgDiv = document.createElement('div');
             
+            // 🚀 NEW: Parse the timestamp (fallback to current time for live messages without one yet)
+            const msgTime = data.timestamp ? new Date(data.timestamp) : new Date();
+            const formattedTime = msgTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            // 🚀 NEW: Extract user initial for the profile avatar placeholder
+            const initial = data.user.charAt(0).toUpperCase();
+
             if (data.user === currentUsername) {
                 msgDiv.className = "flex flex-col items-end space-y-0.5";
                 msgDiv.innerHTML = `
-                    <span class="text-[10px] text-slate-400 px-1">You</span>
+                    <div class="flex items-center space-x-1.5 justify-end">
+                        <span class="text-[10px] text-slate-400">You</span>
+                        <span class="text-[9px] text-slate-500 font-mono">${formattedTime}</span>
+                    </div>
                     <div class="bg-indigo-600 text-white px-3.5 py-2 rounded-2xl rounded-tr-none text-sm max-w-[85%] break-words shadow-md shadow-indigo-600/10">${data.text}</div>
                 `;
             } else {
-                msgDiv.className = "flex flex-col items-start space-y-0.5";
+                msgDiv.className = "flex items-start space-x-2";
                 msgDiv.innerHTML = `
-                    <span class="text-[10px] text-slate-400 px-1">${data.user}</span>
-                    <div class="bg-slate-700 text-slate-100 px-3.5 py-2 rounded-2xl rounded-tl-none text-sm max-w-[85%] break-words shadow-md">${data.text}</div>
+                    <div class="w-7 h-7 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-xs font-bold text-indigo-300 mt-1 shrink-0 select-none">
+                        ${initial}
+                    </div>
+                    <div class="flex-1 flex flex-col space-y-0.5">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="text-[10px] text-slate-400 font-medium">${data.user}</span>
+                            <span class="text-[9px] text-slate-500 font-mono">${formattedTime}</span>
+                        </div>
+                        <div class="bg-slate-700 text-slate-100 px-3.5 py-2 rounded-2xl rounded-tl-none text-sm max-w-[85%] break-words shadow-md self-start">${data.text}</div>
+                    </div>
                 `;
             }
             
