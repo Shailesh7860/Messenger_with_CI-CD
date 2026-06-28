@@ -25,7 +25,9 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('🚀 Successfully connected to MongoDB!'))
     .catch((err) => console.error('❌ Database connection error:', err));
 
-// (Keep your registration route here)
+// --- HTTP ROUTES ---
+
+// Registration endpoint
 app.post('/api/register', async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -41,7 +43,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// (Keep your login route here)
+// Login endpoint
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -55,20 +57,23 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 🚀 NEW: Global state object to map socket IDs to user names
+// Global state object to map unique raw socket IDs to user names
 const activeUsers = {};
 
 // --- WEBSOCKET LOGIC ---
 io.on('connection', (socket) => {
     console.log(`⚡ A user connected: ${socket.id}`);
 
-    // 🚀 NEW: Listen for user registrations upon entering the chat screen
+    // Listen for user registrations upon entering the chat screen
     socket.on('register_user', (username) => {
         activeUsers[socket.id] = username;
-        console.log(`👥 Active Users Roster:`, Object.values(activeUsers));
         
-        // Broadcast the updated array of active usernames to everyone
-        io.emit('update_user_list', Object.values(activeUsers));
+        // 🚀 THE FIX: Convert raw values into a unique Set to filter out duplicate usernames
+        const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
+        console.log(`👥 Unique Active Users Roster:`, uniqueUsernames);
+        
+        // Broadcast ONLY the unique array list to everyone
+        io.emit('update_user_list', uniqueUsernames);
     });
 
     // Listen for incoming chat messages from a user
@@ -88,15 +93,18 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`❌ User disconnected: ${socket.id}`);
         
-        // 🚀 NEW: Clean up the roster and broadcast the lower count
+        // Clean up the disconnected session from the mapping matrix
         if (activeUsers[socket.id]) {
             delete activeUsers[socket.id];
-            io.emit('update_user_list', Object.values(activeUsers));
+            
+            // 🚀 THE FIX: Re-calculate unique users upon clean up disconnection
+            const uniqueUsernames = Array.from(new Set(Object.values(activeUsers)));
+            io.emit('update_user_list', uniqueUsernames);
         }
     });
 });
 
-// Port configuration (Tuned to use Render process environments correctly if present)
+// Port configuration adjusted to pick up dynamic container routing strings automatically
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
