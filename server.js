@@ -6,6 +6,14 @@ const http = require('http'); // Built-in Node.js module for creating servers
 const { Server } = require('socket.io'); // Import Socket.io
 const User = require('./models/User'); 
 
+// 🚀 New: Message Schema for historical storage
+const MessageSchema = new mongoose.Schema({
+    user: { type: String, required: true },
+    text: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now, expires: 86400 }
+});
+const Message = mongoose.model('Message', MessageSchema);
+
 const app = express();
 app.use(express.json());
 // Tell express to serve files inside the 'public' folder automatically
@@ -70,6 +78,18 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// 🚀 New: Fetch chat history for new arrivals
+app.get('/api/messages', async (req, res) => {
+    try {
+        // Fetch the last 50 messages, sorted by time
+        const history = await Message.find().sort({ timestamp: -1 }).limit(50);
+        // Reverse them so they read from oldest to newest in the chat box
+        res.json(history.reverse());
+    } catch (error) {
+        res.status(500).json({ message: 'Error retrieving chat history', error: error.message });
+    }
+});
+
 // Global state object to map unique raw socket IDs to user names
 const activeUsers = {};
 
@@ -90,8 +110,20 @@ io.on('connection', (socket) => {
     });
 
     // Listen for incoming chat messages from a user
-    socket.on('chat_message', (data) => {
+    socket.on('chat_message', async (data) => {
         console.log(`📩 Message received from client:`, data);
+        
+        try {
+            // 🚀 New: Save the incoming message permanently to MongoDB
+            const newMessage = new Message({
+                user: data.user,
+                text: data.text
+            });
+            await newMessage.save();
+        } catch (err) {
+            console.error("❌ Error saving message to DB:", err);
+        }
+        
         // Broadcast the message instantly to EVERYONE connected
         io.emit('receive_message', data);
     });
