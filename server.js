@@ -25,11 +25,6 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('🚀 Successfully connected to MongoDB!'))
     .catch((err) => console.error('❌ Database connection error:', err));
 
-// // --- HTTP ROUTES ---
-// app.get('/', (req, res) => {
-//     res.send('Chat App Backend is running with WebSockets!');
-// });
-
 // (Keep your registration route here)
 app.post('/api/register', async (req, res) => {
     try {
@@ -60,15 +55,25 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// 🚀 NEW: Global state object to map socket IDs to user names
+const activeUsers = {};
+
 // --- WEBSOCKET LOGIC ---
-// This listens for when a user's browser establishes a socket connection
 io.on('connection', (socket) => {
     console.log(`⚡ A user connected: ${socket.id}`);
+
+    // 🚀 NEW: Listen for user registrations upon entering the chat screen
+    socket.on('register_user', (username) => {
+        activeUsers[socket.id] = username;
+        console.log(`👥 Active Users Roster:`, Object.values(activeUsers));
+        
+        // Broadcast the updated array of active usernames to everyone
+        io.emit('update_user_list', Object.values(activeUsers));
+    });
 
     // Listen for incoming chat messages from a user
     socket.on('chat_message', (data) => {
         console.log(`📩 Message received from client:`, data);
-        
         // Broadcast the message instantly to EVERYONE connected
         io.emit('receive_message', data);
     });
@@ -82,11 +87,17 @@ io.on('connection', (socket) => {
     // Listen for when a user closes their browser/tab
     socket.on('disconnect', () => {
         console.log(`❌ User disconnected: ${socket.id}`);
+        
+        // 🚀 NEW: Clean up the roster and broadcast the lower count
+        if (activeUsers[socket.id]) {
+            delete activeUsers[socket.id];
+            io.emit('update_user_list', Object.values(activeUsers));
+        }
     });
 });
 
-// CRITICAL: Change app.listen to server.listen so Socket.io works!
-const PORT = 8080;
+// Port configuration (Tuned to use Render process environments correctly if present)
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on port ${PORT}`);
 });
