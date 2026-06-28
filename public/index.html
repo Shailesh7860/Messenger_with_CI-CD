@@ -6,6 +6,7 @@
     <title>Modern Messenger</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 flex justify-center items-center h-screen m-0 font-sans antialiased">
 
@@ -70,65 +71,31 @@
         let currentRoom = "global";
         let typingTimeout;
 
-        // 🚀 FIXED E2EE LAYER: Corrected algorithm configuration for Web Crypto HKDF
-        async function getRoomCryptoKey(roomIdentifier) {
-            const encoder = new TextEncoder();
-            const rawSecretMaterial = encoder.encode(roomIdentifier + "shared_secret_salt_string");
-            
-            // 1. Import raw bytes specifically for HKDF usage
-            const baseKey = await crypto.subtle.importKey(
-                "raw", 
-                rawSecretMaterial, 
-                "HKDF", 
-                false, 
-                ["deriveKey"]
-            );
-            
-            // 2. Derive the 256-bit AES-GCM key using standard SHA-256 hashing
-            return crypto.subtle.deriveKey(
-                { 
-                    name: "HKDF", 
-                    hash: "SHA-256", 
-                    salt: new Uint8Array(16), 
-                    info: new Uint8Array(0) 
-                },
-                baseKey, 
-                { name: "AES-GCM", length: 256 }, 
-                false, 
-                ["encrypt", "decrypt"]
-            );
+        // 🚀 REFACTORED E2EE: Deterministic room passphrases using CryptoJS
+        function getRoomSecretPhrase(roomIdentifier) {
+            return roomIdentifier + "_secure_e2ee_salt_9971";
         }
 
-        async function encryptText(plainText, roomName) {
-            const encoder = new TextEncoder();
-            const cryptoKey = await getRoomCryptoKey(roomName);
-            const iv = crypto.getRandomValues(new Uint8Array(12)); // Initialize vector parameters
-            const encryptedBuffer = await crypto.subtle.encrypt(
-                { name: "AES-GCM", iv: iv }, cryptoKey, encoder.encode(plainText)
-            );
-            
-            // Convert parameters to transit strings
-            const outArray = new Uint8Array(iv.length + encryptedBuffer.byteLength);
-            outArray.set(iv, 0);
-            outArray.set(new Uint8Array(encryptedBuffer), iv.length);
-            return btoa(String.fromCharCode.apply(null, outArray));
+        function encryptText(plainText, roomName) {
+            const secret = getRoomSecretPhrase(roomName);
+            // Encrypts text using AES-256 and returns a clean, safe Base64 string payload
+            return CryptoJS.AES.encrypt(plainText, secret).toString();
         }
 
-        async function decryptText(cipherBase64, roomName) {
+        function decryptText(cipherText, roomName) {
             try {
-                const cryptoKey = await getRoomCryptoKey(roomName);
-                const rawBinary = atob(cipherBase64);
-                const rawBuffer = new Uint8Array(rawBinary.length);
-                for (let i = 0; i < rawBinary.length; i++) rawBuffer[i] = rawBinary.charCodeAt(i);
+                const secret = getRoomSecretPhrase(roomName);
+                const bytes = CryptoJS.AES.decrypt(cipherText, secret);
+                const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
                 
-                const iv = rawBuffer.slice(0, 12);
-                const data = rawBuffer.slice(12);
-                const decryptedBuffer = await crypto.subtle.decrypt(
-                    { name: "AES-GCM", iv: iv }, cryptoKey, data
-                );
-                return new TextDecoder().decode(decryptedBuffer);
+                // If it successfully decrypts but returns empty, or errors out, catch it safely
+                if (!decryptedText) throw new Error("Decryption output empty");
+                return decryptedText;
             } catch(e) {
-                return "🔒 [Decryption Failure: Missing Secret Keys]";
+                // If it's old plain text history or from an unmatching secret room, display this safely
+                return cipherText.startsWith('U2FsdGVkX1') 
+                    ? "🔒 [Decryption Failure: Missing Secret Keys]" 
+                    : cipherText; // Gracefully render historical plain text if it wasn't encrypted yet
             }
         }
 
@@ -230,11 +197,10 @@
 
             socket.on('receive_message', async (data) => {
                 if(data.room === currentRoom) {
-                    await renderSingleMessage(data);
+                    renderSingleMessage(data);
                 }
             });
 
-            // 🚀 NEW: Receive deletion notices from socket
             socket.on('message_deleted', (data) => {
                 if(data.room === currentRoom) {
                     const TargetBubble = document.getElementById(`msg-node-${data.msgId}`);
@@ -268,9 +234,7 @@
                 });
                 if(response.status === 200) {
                     const history = await response.json();
-                    for(let msg of history) {
-                        await renderSingleMessage(msg);
-                    }
+                    history.forEach(msg => renderSingleMessage(msg));
                 }
             } catch (err) {
                 console.error("❌ Error loading chat history:", err);
@@ -278,23 +242,22 @@
             document.getElementById('msg-input').focus();
         }
 
-        // 🚀 NEW Deletion Event Dispatcher Hook Trigger Link
         function requestDeleteMessage(msgId) {
             if(confirm("Are you sure you want to delete this message for everyone?")) {
                 socket.emit('delete_message', { msgId });
             }
         }
 
-        async function renderSingleMessage(data) {
+        function renderSingleMessage(data) {
             const msgDiv = document.createElement('div');
-            msgDiv.id = `msg-node-${data._id}`; // Assign explicit node tagging parameter identities
+            msgDiv.id = `msg-node-${data._id}`; 
             
             const msgTime = data.timestamp ? new Date(data.timestamp) : new Date();
             const formattedTime = msgTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const initial = data.user.charAt(0).toUpperCase();
 
-            // 🚀 DECRYPT FIRST: Convert backend cipher output string to plaintext layout variables
-            const plainText = await decryptText(data.text, currentRoom);
+            // 🚀 SYNC DECRYPT: Decrypt using pure JavaScript CryptoJS instantly
+            const plainText = decryptText(data.text, currentRoom);
 
             const isImage = plainText.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null || plainText.startsWith('https://images.unsplash.com');
             const messageContent = isImage 
@@ -339,13 +302,13 @@
             }
         }
 
-        async function sendMessage() {
+        function sendMessage() {
             const input = document.getElementById('msg-input');
             const cleanText = input.value.trim();
             if(!cleanText) return;
 
-            // 🚀 ENCRYPT BEFORE OUTBOUND TRANSIT: Scramble plaintext before pushing across the net socket layer
-            const cipherText = await encryptText(cleanText, currentRoom);
+            // 🚀 SYNC ENCRYPT: Scramble plaintext using standard AES
+            const cipherText = encryptText(cleanText, currentRoom);
 
             socket.emit('chat_message', {
                 room: currentRoom,
