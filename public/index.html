@@ -70,16 +70,32 @@
         let currentRoom = "global";
         let typingTimeout;
 
-        // 🚀 NEW E2EE LAYER: Deterministic AES encryption key derivator using room IDs
+        // 🚀 FIXED E2EE LAYER: Corrected algorithm configuration for Web Crypto HKDF
         async function getRoomCryptoKey(roomIdentifier) {
             const encoder = new TextEncoder();
             const rawSecretMaterial = encoder.encode(roomIdentifier + "shared_secret_salt_string");
+            
+            // 1. Import raw bytes specifically for HKDF usage
             const baseKey = await crypto.subtle.importKey(
-                "raw", rawSecretMaterial, { name: "SHA-256" }, false, ["deriveKey"]
+                "raw", 
+                rawSecretMaterial, 
+                "HKDF", 
+                false, 
+                ["deriveKey"]
             );
+            
+            // 2. Derive the 256-bit AES-GCM key using standard SHA-256 hashing
             return crypto.subtle.deriveKey(
-                { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(16), info: new Uint8Array(0) },
-                baseKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+                { 
+                    name: "HKDF", 
+                    hash: "SHA-256", 
+                    salt: new Uint8Array(16), 
+                    info: new Uint8Array(0) 
+                },
+                baseKey, 
+                { name: "AES-GCM", length: 256 }, 
+                false, 
+                ["encrypt", "decrypt"]
             );
         }
 
