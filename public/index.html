@@ -16,7 +16,7 @@
             <p class="text-slate-400 text-sm mt-1">Sign in or auto-register instantly</p>
         </div>
         <div class="space-y-4">
-            <input type="text" id="username" placeholder="Username" onkeydown="if(event.key === 'Enter') document.getElementById('password').focus()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500">
+            <input type="text" id="username" placeholder="Username" onkeydown="if(event.key === 'Enter') document.getElementById('password').focus()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500" autofocus>
     
             <input type="password" id="password" placeholder="Password" onkeydown="if(event.key === 'Enter') login()" class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none text-white transition-all placeholder:text-slate-500">
     
@@ -84,6 +84,9 @@
             document.getElementById('chat-screen').style.display = 'flex';
             document.getElementById('chat-header').innerText = `💬 Chatting as: ${currentUsername}`;
 
+            // 🚀 THE FIX: Focus the chat input box immediately after making the screen visible
+            document.getElementById('msg-input').focus();
+
             socket = io();
 
             // 1. Listen for incoming messages
@@ -110,7 +113,7 @@
                 box.scrollTop = box.scrollHeight; 
             });
 
-            // 2. FIXED: Typing listener is now safely nested inside startChat after socket runs
+            // 2. Typing listener
             socket.on('user_typing', (data) => {
                 const indicator = document.getElementById('typing-indicator');
                 if (data.isTyping) {
@@ -122,10 +125,9 @@
         }
 
         function checkEnter(event) {
-        // If the pressed key is Enter, prevent the default behavior and send!
-        if (event.key === "Enter") {
-            event.preventDefault(); 
-            sendMessage();
+            if (event.key === "Enter") {
+                event.preventDefault(); 
+                sendMessage();
             }
         }
 
@@ -140,7 +142,6 @@
 
             input.value = "";
             
-            // Instantly tell the server we stopped typing since we sent the message
             socket.emit('typing', { user: currentUsername, isTyping: false });
         }
 
@@ -154,11 +155,8 @@
             }, 1500);
         }
 
-        // Auto-focus username input on page load
+        // Auto-focus username input on page load safely
         document.getElementById('username').focus();
-        
-        document.getElementById('msg-input').focus();
-
     </script>
 </body>
 </html>
